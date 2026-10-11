@@ -114,6 +114,70 @@ not separable from noise.
 What this table does **not** contain is a vector-RAG baseline. Every row is
 PageIndex against itself. That is the gap this harness exists to fill.
 
+## Findings: PageIndex local mode on a small local model
+
+Discovered by running the harness rather than by reading the SDK. These are the
+most transferable results so far, and they are about *operating* vectorless RAG
+locally, not about retrieval quality.
+
+### The model has to bridge a name/id mismatch, and long filenames break it
+
+PageIndex's local agent targets a document by putting its **name** into the
+instructions it gives the model, then resolves its **tools** only by internal
+`pi-` id. Measured directly:
+
+| Identifier passed to `get_document` / `get_page_content` / `get_document_structure` / `document_context` | Result |
+| --- | --- |
+| `pi-f28537f944c744019ec2025831ed7377` | all four succeed |
+| `a5879805d70c854ea4361e43a84e3bb2.pdf` | all four fail: `Document not found` |
+
+So the model must reproduce a 36-character hex filename inside a tool call. With
+`qwen3:8b` it does not: four attempts on one question returned
+
+- `Document not found. Did you mean "a58798005d70c854ea4361e43a84e3bb2.pdf"?` (three times — note the extra `0`, i.e. the model's transcription is wrong)
+- `Invalid page number: 14. The document has 15 pages, but page 14 is not valid.`
+
+The same document was then ingested a second time as **`doc-01.pdf`**, and the
+tool call succeeded immediately — it reached `get_page_content` for **page 14,
+the correct evidence page**.
+
+**Consequence.** Ingesting under a short deterministic name (`doc-01.pdf` …
+`doc-34.pdf`) removes the model's weakest step without touching the document.
+`PageIndexLocal.staged_name` implements this; the mapping is written to
+`corpus/pageindex_store/staged_names.json` so a run is still reproducible.
+
+**This matters for the benchmark's validity.** Before this change the harness was
+measuring `qwen3:8b`'s ability to transcribe a filename, not PageIndex's
+retrieval quality. Any comparison run without the fix would have been a
+comparison of the wrong thing.
+
+### A remaining blocker: the duplicate-call guard
+
+With the short name, the tool call reaches page 14 but the run still ends without
+an answer:
+
+```
+{"error": "Duplicate function call detected. The get_page_content function was
+already called for page 14. Please specify a different page or range."}
+```
+
+The agent called the same tool with the same argument twice, PageIndex's guard
+rejected it, and that rejection became the returned envelope — so the loop
+terminated without a synthesised answer. This is unresolved. It is either a
+vendor design issue (a repeated read should be tolerated, or the agent should be
+told to answer) or something the harness should handle by retrying with an
+explicit instruction to answer now. Until it is fixed, PageIndex's responses on
+this hardware are not comparable to the baseline's.
+
+### What this says about local vectorless RAG
+
+Running a reasoning-based retriever on a small local model moves the failure
+surface. Retrieval itself worked — the tree led to the right page. The failures
+were in the *tool-calling protocol around it*: reproducing an identifier, and
+terminating the loop. That is a different class of problem from the one the
+vectorless-RAG pitch is about, and it is invisible in any benchmark run on a
+frontier model.
+
 ## Expected failure modes to look for
 
 Recorded before the run so that post-hoc rationalisation is harder.

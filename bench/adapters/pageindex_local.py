@@ -67,6 +67,30 @@ class PageIndexLocal:
 
     # -- ingestion --------------------------------------------------------
 
+    @staticmethod
+    def staged_name(index: int) -> str:
+        """A short, stable filename for a corpus document.
+
+        PageIndex's local agent identifies documents to its *tools* by internal
+        ``pi-`` id, but its targeting block tells the model the document *name* —
+        so the model has to bridge the two by reproducing the name inside a tool
+        call. Two things break that with a small local model, both measured:
+
+        1. A 36-character hex corpus filename ("a5879805d70c854ea4361e43a84e3bb
+           2.pdf") is not reproduced reliably. Ingested under that name, every
+           attempt with qwen3:8b returned ``Document not found``.
+        2. **Zero-padding is worse than useless.** With ``doc-03.pdf`` the model
+           asked for ``doc-3.pdf`` — it kept the word, the digit and the
+           extension, and dropped only the leading zero. Rigid identifiers that
+           differ by a character the model considers cosmetic are the worst case.
+
+        So names are short, unpadded and punctuation-free: ``doc1.pdf`` …
+        ``doc34.pdf``. Nothing here is cosmetic, so there is nothing to drop. The
+        mapping is written to the store next to the doc ids, so a run stays
+        reproducible. Evidence: docs/FINDINGS.md.
+        """
+        return f"doc{index}.pdf"
+
     def prepare(self, doc_ids: Sequence[str], documents_dir: str) -> None:
         """Index each document, caching doc ids so later runs skip the work.
 
@@ -75,31 +99,45 @@ class PageIndexLocal:
         local model, so the cache is not an optimisation, it is the difference
         between a resumable benchmark and a restartable one.
         """
+        import shutil
+
         os.makedirs(self.storage_path, exist_ok=True)
+        staging = os.path.join(self.storage_path, "staging")
+        os.makedirs(staging, exist_ok=True)
+
         cache_path = os.path.join(self.storage_path, "doc_ids.json")
         cache: dict[str, str] = {}
         if os.path.exists(cache_path):
             with open(cache_path) as fh:
                 cache = json.load(fh)
 
+        names = {doc_id: self.staged_name(i) for i, doc_id in enumerate(sorted(doc_ids), 1)}
+        with open(os.path.join(self.storage_path, "staged_names.json"), "w") as fh:
+            json.dump(names, fh, indent=2, sort_keys=True)
+
         pending = [d for d in doc_ids if d not in cache]
         if pending:
             print(f"indexing {len(pending)} document(s) with {self.index_model} ...")
 
         for i, doc_id in enumerate(pending, 1):
-            path = os.path.join(documents_dir, doc_id)
-            if not os.path.exists(path):
+            source = os.path.join(documents_dir, doc_id)
+            if not os.path.exists(source):
                 print(f"  [{i}/{len(pending)}] MISSING {doc_id}")
                 continue
+            staged = os.path.join(staging, names[doc_id])
+            if not os.path.exists(staged):
+                shutil.copyfile(source, staged)
             started = time.time()
-            result = self.client.submit_document(path, mode=self.mode)
+            result = self.client.submit_document(staged, mode=self.mode)
             # submit_document returns the internal doc id; key the cache by the
             # corpus filename so a manifest change does not silently mis-map.
             cache[doc_id] = result["doc_id"]
             with open(cache_path, "w") as fh:
                 json.dump(cache, fh, indent=2)
-            elapsed = time.time() - started
-            print(f"  [{i}/{len(pending)}] {doc_id} -> {cache[doc_id]} ({elapsed:.1f}s)")
+            print(
+                f"  [{i}/{len(pending)}] {doc_id} -> {cache[doc_id]} "
+                f"as {names[doc_id]} ({time.time()-started:.1f}s)"
+            )
 
         self._doc_ids = cache
 

@@ -61,6 +61,41 @@ class TestParseChatEnvelope:
         assert "February 8, 2021" in text
 
 
+class TestStagedName:
+    """PageIndex's local agent tells the model the document *name* but resolves
+    its tools by internal id, so the model has to reproduce the name in a tool
+    call. Both a long hex filename and zero-padding break that on small local
+    models — the second is the subtler trap."""
+
+    def test_is_short_and_unpadded(self):
+        assert PageIndexLocal.staged_name(1) == "doc1.pdf"
+        assert PageIndexLocal.staged_name(34) == "doc34.pdf"
+
+    def test_no_zero_padding_to_be_dropped(self):
+        # Measured: with 'doc-03.pdf' the model asked for 'doc-3.pdf'. A name
+        # that differs from its own unpadded form only by a leading zero invites
+        # the model to drop it.
+        for i in range(1, 10):
+            assert not PageIndexLocal.staged_name(i).startswith("doc0")
+
+    def test_no_punctuation_inside_the_name(self):
+        # Hyphens and underscores are also candidates for being dropped or
+        # mis-typed; the stem should be alphanumeric only.
+        stem = PageIndexLocal.staged_name(12).removesuffix(".pdf")
+        assert stem.isalnum()
+
+    def test_is_much_shorter_than_a_corpus_filename(self):
+        corpus_name = "a5879805d70c854ea4361e43a84e3bb2.pdf"
+        assert len(PageIndexLocal.staged_name(1)) < len(corpus_name) / 3
+
+    def test_is_deterministic(self):
+        assert PageIndexLocal.staged_name(7) == PageIndexLocal.staged_name(7)
+
+    def test_differs_per_document(self):
+        names = {PageIndexLocal.staged_name(i) for i in range(1, 35)}
+        assert len(names) == 34
+
+
 class TestJudgeParseVerdict:
     @pytest.mark.parametrize(
         "text,expected",
