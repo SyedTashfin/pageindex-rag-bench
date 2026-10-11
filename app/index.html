@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pageindex-rag-bench — demo</title>
+<style>
+  :root{
+    --bg:#0b0d10; --panel:#12161b; --panel2:#171c22; --line:#242c35;
+    --fg:#e6edf3; --dim:#8b98a5; --dimmer:#5d6b78;
+    --accent:#5ec8a0; --warn:#d9a441; --bad:#d9705f; --link:#79b8ff;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--fg);font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+       -webkit-font-smoothing:antialiased}
+  code,pre,.mono{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace}
+  a{color:var(--link);text-decoration:none}
+  a:hover{text-decoration:underline}
+
+  header{border-bottom:1px solid var(--line);padding:18px 22px;text-align:left}
+  h1{font-size:17px;font-weight:600;letter-spacing:-.01em}
+  .sub{color:var(--dim);font-size:13px;margin-top:3px;max-width:96ch}
+  .meta{display:flex;gap:22px;flex-wrap:wrap;margin-top:12px;font-size:12px;color:var(--dim)}
+  .meta b{color:var(--fg);font-weight:500}
+  .meta .k{color:var(--dimmer)}
+
+  .bar{display:flex;align-items:center;gap:14px;padding:12px 22px;border-bottom:1px solid var(--line);
+       background:var(--panel);flex-wrap:wrap}
+  button{background:var(--accent);color:#08120e;border:0;padding:8px 15px;font-size:13px;font-weight:600;
+         cursor:pointer;border-radius:3px}
+  button:hover:not(:disabled){filter:brightness(1.1)}
+  button:disabled{background:#2a333c;color:var(--dimmer);cursor:not-allowed}
+  .status{font-size:12px;color:var(--dim)}
+  .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--dimmer);margin-right:6px;
+       vertical-align:middle}
+  .dot.ok{background:var(--accent)} .dot.busy{background:var(--warn)} .dot.err{background:var(--bad)}
+
+  .wrap{display:grid;grid-template-columns:340px 1fr;min-height:calc(100vh - 150px)}
+  @media(max-width:900px){.wrap{grid-template-columns:1fr}}
+  .side{border-right:1px solid var(--line);overflow-y:auto;max-height:calc(100vh - 150px)}
+  .doc{padding:11px 16px 7px;font-size:11px;color:var(--dim);background:var(--panel);
+       border-bottom:1px solid var(--line);position:sticky;top:0}
+  .q{padding:9px 16px;border-bottom:1px solid #1a2026;cursor:pointer;font-size:13px;color:var(--dim)}
+  .q:hover{background:var(--panel);color:var(--fg)}
+  .q.sel{background:var(--panel2);color:var(--fg);box-shadow:inset 3px 0 0 var(--accent)}
+  .main{padding:22px;overflow-y:auto;max-height:calc(100vh - 150px);text-align:left}
+
+  .ask{margin-bottom:18px}
+  .ask .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--dimmer);margin-bottom:5px}
+  .ask .txt{font-size:16px;line-height:1.45}
+  .ref{margin-top:9px;font-size:12px;color:var(--dim);border-left:2px solid var(--line);padding-left:11px}
+  .ref b{color:var(--accent);font-weight:600}
+  .reveal{background:none;border:1px solid var(--line);color:var(--dim);padding:3px 9px;font-size:11px;
+          border-radius:3px;cursor:pointer}
+
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:1100px){.cols{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:5px;overflow:hidden}
+  .card h3{font-size:12px;font-weight:600;padding:9px 13px;border-bottom:1px solid var(--line);
+           display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .card h3 .n{font-family:ui-monospace,monospace;color:var(--fg)}
+  .card h3 .how{font-size:10.5px;color:var(--dimmer);font-weight:400;font-family:inherit}
+  .card .body{padding:13px;font-size:14px;line-height:1.5;min-height:64px;white-space:pre-wrap;
+              word-break:break-word}
+  .card .foot{border-top:1px solid var(--line);padding:9px 13px;font-size:11px;color:var(--dim);
+              display:flex;gap:16px;flex-wrap:wrap}
+  .pill{font-size:10px;padding:2px 7px;border-radius:2px;font-family:ui-monospace,monospace}
+  .pill.hit{background:rgba(94,200,160,.14);color:var(--accent)}
+  .pill.miss{background:rgba(217,112,95,.14);color:var(--bad)}
+  .pill.na{background:#222a32;color:var(--dimmer)}
+  .pg{font-family:ui-monospace,monospace;color:var(--fg)}
+  .err{color:var(--bad);font-family:ui-monospace,monospace;font-size:12px}
+
+  #log{margin-top:14px;background:#0d1116;border:1px solid var(--line);border-radius:5px;padding:11px 13px;
+       font-size:11.5px;max-height:190px;overflow-y:auto;color:var(--dim);white-space:pre-wrap}
+  #log:empty{display:none}
+  .empty{color:var(--dimmer);font-size:13px;padding:26px 0}
+  .hint{color:var(--dimmer);font-size:12px;margin-top:10px;max-width:78ch}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>pageindex-rag-bench</h1>
+  <div class="sub">Two retrieval strategies, the same documents, the same language model. The only variable is
+    how the system finds the passage that answers the question.</div>
+  <div class="meta" id="meta"></div>
+</header>
+
+<div class="bar">
+  <button id="prep">Index the slice</button>
+  <span class="status" id="stat"><span class="dot"></span>not indexed</span>
+  <span class="status" id="err"></span>
+</div>
+
+<div class="wrap">
+  <div class="side" id="side"><div class="empty" style="padding:16px">Index the slice to load questions.</div></div>
+  <div class="main" id="main">
+    <div class="empty">Pick a question on the left once indexing is done.</div>
+    <div class="hint" id="hint"></div>
+  </div>
+</div>
+
+<div id="log"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+let SELECTED = null;
+
+function badge(r){
+  if (r.hit === true)  return '<span class="pill hit">found the evidence page</span>';
+  if (r.hit === false) return '<span class="pill miss">missed the evidence page</span>';
+  return '<span class="pill na">no page provenance</span>';
+}
+
+const HOW = {
+  pageindex_local: "builds a tree of the document, an LLM reasons down it — no embeddings, no vector DB, no chunking",
+  pgvector_baseline: "cuts the text into 1200-char chunks, embeds them, cosine top-5 from Postgres + pgvector"
+};
+
+async function refresh(){
+  const s = await (await fetch('/api/status')).json();
+  const d = s.ready ? '<span class="dot ok"></span>indexed' : (s.indexing ? '<span class="dot busy"></span>indexing…' : '<span class="dot"></span>not indexed');
+  $('#stat').innerHTML = d;
+  $('#prep').disabled = s.indexing || s.ready;
+  $('#err').innerHTML = s.error ? '<span class="err">'+s.error+'</span>' : '';
+  $('#log').textContent = (s.log||[]).join('\n');
+  $('#log').scrollTop = 1e6;
+
+  const c = s.corpus, m = s.models;
+  $('#meta').innerHTML =
+    `<span><span class="k">slice</span> <b>${c.documents.length} documents</b> (${c.total_pages} pages), ${c.questions} questions</span>`+
+    `<span><span class="k">full benchmark</span> <b>${c.full_benchmark}</b></span>`+
+    `<span><span class="k">answer model</span> <b>${m.chat}</b></span>`+
+    `<span><span class="k">index model</span> <b>${m.index}</b></span>`+
+    `<span><span class="k">embeddings</span> <b>${m.embed}</b></span>`;
+  return s;
+}
+
+async function loadQuestions(){
+  const d = await (await fetch('/api/questions')).json();
+  const side = $('#side'); side.innerHTML = '';
+  for (const doc of d.documents){
+    const h = document.createElement('div'); h.className='doc';
+    h.textContent = `${doc.doc_id.slice(0,34)}  ·  ${doc.pages}p  ·  ${doc.questions} q`;
+    side.appendChild(h);
+    for (const q of d.questions.filter(x=>x.doc_id===doc.doc_id)){
+      const el = document.createElement('div'); el.className='q'; el.dataset.id=q.id;
+      el.textContent = q.question;
+      el.onclick = ()=>ask(q.id, el);
+      side.appendChild(el);
+    }
+  }
+}
+
+async function ask(id, el){
+  document.querySelectorAll('.q.sel').forEach(n=>n.classList.remove('sel'));
+  el.classList.add('sel');
+  $('#main').innerHTML = '<div class="empty">asking both systems… local models, so this is 5–60s.</div>';
+  const r = await (await fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json'},
+                                           body:JSON.stringify({question_id:id})})).json();
+  if (r.error){ $('#main').innerHTML = '<div class="err">'+r.error+'</div>'; return; }
+  SELECTED = r;
+
+  const cards = r.results.map(x=>`
+    <div class="card">
+      <h3><span class="n">${x.system}</span>${badge(x)}</h3>
+      <div class="body">${ x.ok
+          ? (x.response || '<span class="err">empty response</span>')
+          : '<span class="err">'+x.error+'</span>' }</div>
+      <div class="foot">
+        <span><span class="k">pages retrieved</span> <span class="pg">${ x.ok && x.retrieved_pages.length ? x.retrieved_pages.join(', ') : '—' }</span></span>
+        <span><span class="k">took</span> ${x.latency_s}s</span>
+        ${ x.ok ? `<span><span class="k">context</span> ${(x.context_chars||0).toLocaleString()} chars</span>`:'' }
+      </div>
+      <div class="foot" style="border-top:0;padding-top:0;color:var(--dimmer);font-size:10.5px">${HOW[x.system]||''}</div>
+    </div>`).join('');
+
+  $('#main').innerHTML = `
+    <div class="ask">
+      <div class="lbl">question · ${r.doc_id}</div>
+      <div class="txt">${r.question}</div>
+      <div class="ref">
+        <button class="reveal" id="rv">show the known correct answer</button>
+        <div id="refbody" style="display:none;margin-top:7px">
+          <b>${r.reference}</b>
+          ${ r.evidence_pages.length ? `<span style="color:var(--dimmer)"> — evidence on page ${r.evidence_pages.join(', ')} of the PDF</span>`:'' }
+        </div>
+      </div>
+    </div>
+    <div class="cols">${cards}</div>
+    <div class="hint">"Missed the evidence page" means the retriever never surfaced the page the answer lives on —
+      so a wrong answer there is a <b>retrieval</b> failure, not a reasoning one. Both systems use the same answer
+      model, so that badge is the only thing measuring retrieval.</div>`;
+
+  $('#rv').onclick = ()=>{ const b=$('#refbody'); const v=b.style.display==='none';
+    b.style.display = v?'block':'none'; $('#rv').textContent = v?'hide the answer':'show the known correct answer'; };
+}
+
+$('#prep').onclick = async ()=>{
+  const r = await (await fetch('/api/prepare',{method:'POST'})).json();
+  if (r.error){ $('#main').innerHTML = `<div class="err">${r.error}: ${r.detail||''}<br>${r.fix||''}</div>`; }
+  const t = setInterval(async ()=>{ const s = await refresh(); if (s.ready){ clearInterval(t); loadQuestions(); }
+                                    else if (s.error){ clearInterval(t); } }, 2500);
+};
+refresh();
+loadQuestions();
+</script>
+</body>
+</html>

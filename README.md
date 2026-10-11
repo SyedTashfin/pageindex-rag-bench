@@ -8,6 +8,62 @@ chat model, and the same judge for both.
 down it. The claim is that similarity is not relevance. This harness tests that claim rather than
 assuming it.
 
+## Run it yourself
+
+The benchmark is a CLI; the demo is a local web page that runs both systems on
+one question at a time and shows what each of them actually retrieved.
+
+```bash
+# 1. dependencies
+uv venv --python 3.12 .venv && source .venv/bin/activate
+uv pip install -e ".[dev,demo]"
+
+# 2. corpus (34 documents, 108 MB, hash-verified against the manifest)
+python -m corpus.fetch --docs
+python -m corpus.questions          # derive the question sets
+
+# 3. models — local, so a run costs nothing
+ollama serve
+ollama pull qwen3:8b                # answers the questions
+ollama pull qwen3:1.7b              # builds the tree index (speed matters more here)
+ollama pull nomic-embed-text        # embeddings for the vector baseline
+
+# 4. the vector baseline needs a database
+docker compose up -d                # pgvector on :5433
+
+# 5a. interactive: pick a question, see both systems side by side
+python -m app.make_demo_set --documents 3
+python -m uvicorn app.server:app --port 8000     # open http://127.0.0.1:8000
+
+# 5b. or run the benchmark and generate the results table
+python -m bench.run --system pageindex_local  --set comparable_90
+python -m bench.run --system pgvector_baseline --set comparable_90
+python -m bench.report
+```
+
+The demo runs a **slice** (three of the 34 documents by default), because
+indexing all 34 through a local model is measured in hours. The code path is
+identical; only the corpus is smaller. Both `bench.run` and `app.server` are
+resumable — indexing is cached, so an interrupted run continues where it stopped.
+
+### What running it actually looks like
+
+First end-to-end run on the demo slice, question: *"Format the date mentioned on
+page 14 as YYYY-MM-DD."* — reference answer `2021-02-08`, evidence on page 14:
+
+| | PageIndex (local) | pgvector baseline |
+| --- | --- | --- |
+| Found page 14 (the evidence page) | yes | yes |
+| Response | the text of page 14 | `2021-02-08` |
+| Latency | 58.2 s | 16.3 s |
+
+Both retrieved the right page. Only the baseline produced the formatted answer —
+PageIndex returned the page content itself, because its local agent loop can end
+on a retrieval tool call instead of synthesising a final answer. That is recorded
+honestly (`_shape: page_content` in the run output) rather than scored as a
+correct response. One question is not a result; it is a demonstration that the
+harness runs and that the comparison is worth making properly.
+
 ## The question this answers
 
 The obvious baseline for a vectorless retrieval engine is vector RAG — chunk the document, embed

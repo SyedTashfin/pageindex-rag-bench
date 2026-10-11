@@ -1,0 +1,153 @@
+{
+  "note": "Small slice for interactive use. Regenerate with python -m app.make_demo_set. The full benchmark runs the same code over all 34 documents (corpus/annotations/comparable_90.json).",
+  "selection_rule": "3 documents with the fewest pages that carry questions in the plain-text set",
+  "documents": [
+    {
+      "doc_id": "936c0e2c2e6c8e0c07c51bfaf7fd0a83.pdf",
+      "pages": 15,
+      "bytes": 308854,
+      "questions": 1
+    },
+    {
+      "doc_id": "a5879805d70c854ea4361e43a84e3bb2.pdf",
+      "pages": 15,
+      "bytes": 377310,
+      "questions": 7
+    },
+    {
+      "doc_id": "7c3f6204b3241f142f0f8eb8e1fefe7a.pdf",
+      "pages": 15,
+      "bytes": 449018,
+      "questions": 6
+    }
+  ],
+  "total_pages": 45,
+  "questions": [
+    {
+      "id": 30,
+      "doc_id": "a5879805d70c854ea4361e43a84e3bb2.pdf",
+      "question": "Format the date mentioned on page 14 as YYYY-MM-DD.",
+      "reference": "2021-02-08",
+      "evidence_pages": "[14]",
+      "evidence_sources": "['Pure-text (Plain-text)']",
+      "doc_type": "Administration/Industry file"
+    },
+    {
+      "id": 31,
+      "doc_id": "a5879805d70c854ea4361e43a84e3bb2.pdf",
+      "question": "What is INF SERCRL LLP FAX No on page fourteen?",
+      "reference": "514-312-0292",
+      "evidence_pages": "[14]",
+      "evidence_sources": "['Pure-text (Plain-text)']",
+      "doc_type": "Administration/Industry file"
+    },
+    {
+      "id": 32,
+      "doc_id": "a5879805d70c854ea4361e43a84e3bb2.pdf",
+      "question": "What type of court is noted on the cover page?",
+      "reference": "SUPERIOR COURT",
+      "evidence_pages": "[1]",
+      "evidence_sources": "['Pure-text (Plain-text)']",
+      "doc_type": "Administration/Industry file"
+    },
+    {
+      "id": 33,
+      "doc_id": "a5879805d70c854ea4361e43a84e3bb2.pdf",
+      "question": "what is the email id of the mtre laurent nahmiash ?",
+      "reference": "lnahmiash@infavocats.com",
+      "evidence_pages": "[14]",
+      "evidence_sources": "['Pure-text (Plain-text)']",
+      "doc_type": "Administration/Industry file"
+    },
+    {
+      "id": 34,
+      "doc_id": "a5879805d70c854ea4361e43a84e3bb2.pdf",
+      "question": "How many Exhibits are mentioned in the document?",
+      "reference": "27",
+      "evidence_pages": "[1, 2, 3, 4, 5, 6, 9, 10, 11, 12]",
+      "evidence_sources": "['Pure-text (Plain-text)']",
+      "doc_type": "Administration/Industry file"
+    },
+    {
+      "id": 35,
+      "doc_id": "a5879805d70c854ea4361e43a84e3bb2.pdf",
+      "question": "Among the 26 Exhibits from P-1 to P-26, which Exhibits are not mentioned in the document? The answer should be formatted as a list, for example [\"P-1\",\"P-2\"]",
+      "reference": "['P-15', 'P-16', 'P-17', 'P-18']",
+      "evidence_pages": "[]",
+      "evidence_sources": "['Pure-text (Plain-text)']",
+      "doc_type": "Administration/Industry file"
+    },
+    {
+      "id": 36,
+      "doc_id": "a5879805d70c854ea4361e43a84e3bb2.pdf",
+      "question": "How many times does Exhibit P-10 mentioned in the document? List all pages and formatted as a list, for example, [\"1\",\"2\"]",
+      "reference": "['1', '2', '3', '10']",
+      "evidence_pages": "[1, 2, 3, 10]",
+      "evidence_sources": "['Pure-text (Plain-text)']",
+      "doc_type": "Administration/Industry file"
+    },
+    {
+      "id": 42,
+      "doc_id": "7c3f6204b3241f142f0f8eb8e1fefe7a.pdf",
+      "question": "What types of charts are in the document?",
+      "reference": "Not answerable or 0 or none",
+      "evidence_pages": "[]",
+      "evidence_sources": "['Pure-text (Plain-text)']",
+      "doc_type": "Administration/Industry file"
+    },
+    {
+      "id": 43,
+      "doc_id": "7c3f6204b3241f142f0f8eb8e1fefe7a.pdf",
+      "question": "Write the filling id and case number in this document?",
+      "reference": "['48897809', '5152012']",
+      "evidence_pages": "[1, 1]",
+      "evidence_sources": "['Pure-text (Plain-text)']",
+      "doc_type": "Administration/Industry file"
+    },
+    {
+      "id": 44,
+      "doc_id": "7c3f6204b3241f142f0f8eb8e1fefe7a.pdf",
+      "question": "What is the name of the person who signed at the end of the opinion?",
+      "reference": "Not answerable",
+      "evidence_pages": "[1]",
+      "evidence_sources": "['Pure-text (Plain-text)']",
+      "doc_type": "Administration/Industry file"
+    },
+    {
+      "id": 45,
+      "doc_id": "7c3f6204b3241f142f0f8eb8e1fefe7a.pdf",
+      "question": "Which case is related to the statement that \"PIC also never determined if Hanson's qualified immunity defense would overcome her conflicts of interest.\"?",
+      "reference": "FN54. Wong v. Allison, 208 F.3d 224, 2000 WL 206572",
+      "evidence_pages": "[13, 14]",
+      "evidence_sources": "['Pure-text (Plain-text)']",
+      "doc_type": "Administration/Industry file"
+    },
+    {
+      "id": 46,
+      "doc_id": "7c3f6204b3241f142f0f8eb8e1fefe7a.pdf",
+      "question": "The document represents which judges' opinions?",
+      "reference": "Scott Bradley.",
+      "evidence_pages": "[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]",
+      "evidence_sources": "['Pure-text (Plain-text)']",
+      "doc_type": "Administration/Industry file"
+    },
+    {
+      "id": 47,
+      "doc_id": "7c3f6204b3241f142f0f8eb8e1fefe7a.pdf",
+      "question": "Who is the defendant of this case?",
+      "reference": "DELAWARE STATE PUBLIC INTEGRITY COMMISSION.",
+      "evidence_pages": "[1]",
+      "evidence_sources": "['Pure-text (Plain-text)']",
+      "doc_type": "Administration/Industry file"
+    },
+    {
+      "id": 50,
+      "doc_id": "936c0e2c2e6c8e0c07c51bfaf7fd0a83.pdf",
+      "question": "Describe the significant changes of the Risk Management Plan since last year.",
+      "reference": "N/A",
+      "evidence_pages": "[14]",
+      "evidence_sources": "['Pure-text (Plain-text)']",
+      "doc_type": "Administration/Industry file"
+    }
+  ]
+}

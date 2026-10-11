@@ -5,8 +5,60 @@ from __future__ import annotations
 import pytest
 
 from bench.adapters.base import pages_from_citations
-from bench.adapters.pgvector_baseline import chunk_pages
+from bench.adapters.pageindex_local import PageIndexLocal
+from bench.adapters.pgvector_baseline import chunk_pages, create_table_sql
 from bench.judge import Judge
+
+
+class TestParseChatEnvelope:
+    """PageIndex returns a JSON envelope serialised as a string. Treating that
+    string as the answer records a NOT_FOUND payload as a successful response —
+    which is what the first version of this adapter did."""
+
+    def test_reads_content_from_a_success_envelope(self):
+        text, raw, pages = PageIndexLocal.parse_chat(
+            '{"status": "success", "content": "February 8, 2021"}'
+        )
+        assert text == "February 8, 2021"
+        assert raw["status"] == "success"
+        assert pages == []
+
+    def test_raises_on_a_not_found_envelope(self):
+        payload = (
+            '{"error": "Document not found.", "errorCode": "NOT_FOUND",'
+            ' "doc_name": "x.pdf"}'
+        )
+        with pytest.raises(RuntimeError, match="NOT_FOUND"):
+            PageIndexLocal.parse_chat(payload)
+
+    def test_raises_on_a_bare_error_field(self):
+        with pytest.raises(RuntimeError, match="boom"):
+            PageIndexLocal.parse_chat('{"error": "boom"}')
+
+    def test_passes_through_plain_text(self):
+        # If the SDK ever returns prose instead of an envelope, that is the answer.
+        text, _, pages = PageIndexLocal.parse_chat("The answer is 42.")
+        assert text == "The answer is 42."
+        assert pages == []
+
+    def test_reads_a_real_dict_too(self):
+        text, _, _ = PageIndexLocal.parse_chat({"status": "success", "content": "ok"})
+        assert text == "ok"
+
+    def test_never_returns_a_raw_json_string_as_the_answer(self):
+        text, _, _ = PageIndexLocal.parse_chat('{"status": "success", "content": "fine"}')
+        assert not text.startswith("{")
+
+    def test_page_content_is_flagged_and_yields_provenance(self):
+        """The agent loop sometimes returns the last tool result — a page of the
+        document — where a synthesised answer was expected. The page number is
+        real retrieval provenance and must be recorded as such, not silently
+        scored as an answer."""
+        payload = '{"page": 14, "text": "Montr\\u00e9al, February 8, 2021"}'
+        text, raw, pages = PageIndexLocal.parse_chat(payload)
+        assert raw["_shape"] == "page_content"
+        assert pages == [14]
+        assert "February 8, 2021" in text
 
 
 class TestJudgeParseVerdict:
@@ -72,6 +124,50 @@ class TestPagesFromCitations:
     def test_ignores_unrecognised_shapes_instead_of_raising(self):
         assert pages_from_citations([{"nonsense": 1}, "a string", None]) == []
         assert pages_from_citations([]) == []
+
+
+class TestCreateTableSql:
+    """Regression guard for a bug that only appeared when actually run against
+    Postgres: a bind parameter is not allowed as a type modifier."""
+
+    def test_dimension_is_a_literal_not_a_placeholder(self):
+        sql = create_table_sql("chunks", 768)
+        assert "vector(768)" in sql
+        assert "%s" not in sql
+        assert "$1" not in sql
+
+    def test_dimension_is_coerced_to_an_integer(self):
+        # The value is interpolated into DDL, so it must never be a string.
+        assert "vector(1024)" in create_table_sql("chunks", "1024")
+
+    def test_table_name_is_used_and_primary_key_present(self):
+        sql = create_table_sql("my_chunks", 3)
+        assert sql.startswith("CREATE TABLE IF NOT EXISTS my_chunks")
+        assert "PRIMARY KEY (doc_id, page, chunk_index)" in sql
+
+    def test_primary_key_includes_the_page(self):
+        """chunk_pages numbers chunks within each page, so chunk_index restarts
+        at 0 on every page. Keying without `page` collides on page 2 of every
+        document - this actually happened against Postgres."""
+        assert "page" in create_table_sql("chunks", 768).split("PRIMARY KEY")[1]
+
+
+class TestChunkIndexRestartsPerPage:
+    def test_chunk_index_is_per_page_not_global(self):
+        # Documents the behaviour the primary key above has to accommodate.
+        chunks = chunk_pages(["x " * 400, "y " * 400], chunk_chars=300, overlap_chars=50)
+        by_page = {}
+        for c in chunks:
+            by_page.setdefault(c.page, []).append(c.index)
+        assert set(by_page) == {1, 2}
+        assert by_page[1][0] == 0 and by_page[2][0] == 0
+
+    def test_no_duplicate_doc_page_index_tuples(self):
+        chunks = chunk_pages(
+            ["x " * 500, "y " * 500, "z " * 500], chunk_chars=250, overlap_chars=40
+        )
+        keys = [(c.page, c.index) for c in chunks]
+        assert len(keys) == len(set(keys)), "same (page, index) emitted twice"
 
 
 class TestChunkPages:

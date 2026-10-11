@@ -2,6 +2,9 @@
 corpus/documents/
 corpus/annotations/
 corpus/indexed_docs.json
+# The PageIndex local store holds the built tree AND the document text it was
+# built from, so it is derived third-party content, not our own artefact.
+corpus/pageindex_store/
 
 # Raw per-question run output. Aggregated summaries in results/ ARE committed.
 results/raw/

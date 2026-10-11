@@ -15,6 +15,7 @@ import json
 import os
 import time
 from collections.abc import Sequence
+from typing import Any
 
 from .base import Answer, pages_from_citations
 
@@ -104,27 +105,70 @@ class PageIndexLocal:
 
     # -- answering --------------------------------------------------------
 
+    @staticmethod
+    def parse_chat(result: Any) -> tuple[str, dict, list[int]]:
+        """Read PageIndex's chat envelope.
+
+        Three shapes occur in practice, all serialised as a *string* rather than
+        a dict:
+
+            answer    {"status": "success", "content": "February 8, 2021"}
+            failure   {"status": "error", "error": "...", "errorCode": "NOT_FOUND"}
+            tool      {"page": 14, "text": "<page 14 contents>"}
+
+        The third is the subtle one. Local mode runs an agent loop, and the
+        envelope it returns can be the raw result of the last tool call rather
+        than a synthesised answer — so the caller receives a page of the document
+        where it expected a sentence. Treating that text as the answer would
+        score a retrieval artifact as a response, which is both wrong and
+        invisible. The page number it carries *is* genuine retrieval provenance,
+        so it is returned as such and the shape is flagged in the payload.
+
+        Failures raise, so they land in the run's error column instead of being
+        recorded as a successful response.
+        """
+        payload: Any = result
+        if isinstance(result, str):
+            try:
+                payload = json.loads(result)
+            except json.JSONDecodeError:
+                return result.strip(), {}, []  # already plain text
+
+        if isinstance(payload, dict):
+            code = payload.get("errorCode") or payload.get("error_code")
+            if code or payload.get("error"):
+                raise RuntimeError(
+                    f"PageIndex {code or 'error'}: {payload.get('error') or payload.get('detail')}"
+                )
+            if "page" in payload and "text" in payload:
+                try:
+                    pages = [int(payload["page"])]
+                except (TypeError, ValueError):
+                    pages = []
+                return str(payload["text"]).strip(), {**payload, "_shape": "page_content"}, pages
+
+            text = payload.get("content") or payload.get("answer") or payload.get("text") or ""
+            return str(text).strip(), payload, []
+
+        return str(result).strip(), {}, []
+
     def answer(self, doc_id: str, question: str) -> Answer:
         internal = getattr(self, "_doc_ids", {}).get(doc_id)
         if not internal:
-            raise RuntimeError(f"{doc_id} has not been indexed; call prepare() first")
+            raise RuntimeError(
+                f"{doc_id} has not been indexed; call prepare() first "
+                f"(known documents: {sorted(getattr(self, '_doc_ids', {}))[:3]})"
+            )
 
         started = time.time()
         result = self.client.chat(question, doc_id=internal, citations=self.citations)
         elapsed = time.time() - started
+        text, raw, pages = self.parse_chat(result)
 
-        if isinstance(result, str):
-            text, raw = result, {}
-        elif isinstance(result, dict):
-            text = result.get("answer") or result.get("content") or ""
-            raw = result
-        else:  # a stream, if citations/stream settings ever change
-            text, raw = str(result), {}
-
-        pages: list[int] = []
         if self.citations and text:
             try:
-                pages = pages_from_citations(self.client.get_citations(text, internal))
+                cited = pages_from_citations(self.client.get_citations(text, internal))
+                pages = sorted(set(pages) | set(cited))
             except Exception as exc:  # noqa: BLE001 - provenance is best-effort
                 raw = {**raw, "citation_error": str(exc)}
 

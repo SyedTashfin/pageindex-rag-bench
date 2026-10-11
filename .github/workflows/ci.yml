@@ -18,11 +18,13 @@ jobs:
         # The CI dependency set is four packages, so caching buys little anyway.
 
       - name: Install
-        # Scoring tests import numpy, pytest and the adapters' pure helpers.
-        # They deliberately do not need a database, a model, or a network.
+        # Scoring tests and the adapter helpers under test import numpy and
+        # pgvector (for the Vector type used in the baseline's SQL params).
+        # They deliberately need no database, no model, and no litellm, so this
+        # install stays small and the suite stays fast and offline-capable.
         run: |
           uv venv --python 3.12
-          uv pip install --python .venv/bin/python pytest numpy ruff
+          uv pip install --python .venv/bin/python pytest numpy pgvector ruff
 
       - name: Lint
         run: .venv/bin/ruff check .
@@ -74,10 +76,11 @@ jobs:
           PY
 
       - name: No third-party data committed
-        # The whole point of the fetch-don't-vendor design: if a PDF or an
-        # annotation file ever lands in git, that is a licence regression.
+        # The whole point of the fetch-don't-vendor design: if a PDF, an
+        # annotation file, or a built index (which contains extracted document
+        # text) ever lands in git, that is a licence regression.
         run: |
-          if git ls-files | grep -E 'corpus/(documents|annotations)/' ; then
+          if git ls-files | grep -E 'corpus/(documents|annotations|pageindex_store)/' ; then
             echo "third-party data is committed; see THIRD_PARTY.md" >&2
             exit 1
           fi

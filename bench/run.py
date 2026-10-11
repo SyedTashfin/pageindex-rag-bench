@@ -21,6 +21,7 @@ import traceback
 from . import metrics
 from .adapters.base import System
 from .judge import Judge, default_judge
+from .preload import preload_litellm
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ANNOTATIONS_DIR = os.path.join(REPO_ROOT, "corpus", "annotations")
@@ -100,6 +101,10 @@ def main(argv: list[str] | None = None) -> int:
         help="ingest the corpus and exit, without answering questions",
     )
     args = ap.parse_args(argv)
+
+    # Before any adapter is constructed: PageIndex preloads litellm on its own
+    # thread, and a concurrent first-import of litellm wedges the process.
+    preload_litellm()
 
     system = build_system(args.system)
     questions = load_questions(args.set_name)

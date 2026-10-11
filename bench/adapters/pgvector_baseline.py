@@ -24,6 +24,8 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from pgvector import Vector
+
 from .base import Answer
 
 DEFAULT_CHAT_MODEL = "ollama/qwen2.5:7b-instruct"
@@ -101,6 +103,34 @@ def chunk_pages(
     return chunks
 
 
+def create_table_sql(table: str, dim: int) -> str:
+    """DDL for the chunk table.
+
+    Postgres does not accept a bind parameter as a type modifier: ``vector($1)``
+    fails with "type modifiers must be simple constants or identifiers". The
+    dimension therefore has to be interpolated as a literal. That is safe here —
+    it is an int derived from the embedding response, never user input — and it
+    is kept as a pure function so a test can assert that no placeholder ever
+    reaches the dimension slot again.
+
+    The key includes ``page`` because ``chunk_pages`` numbers chunks *within* a
+    page, so ``chunk_index`` restarts at 0 on every page. Keying on
+    ``(doc_id, chunk_index)`` alone collides on the second page of every
+    document.
+    """
+    return (
+        f"CREATE TABLE IF NOT EXISTS {table} ("
+        " doc_id text NOT NULL,"
+        " page int NOT NULL,"
+        " chunk_index int NOT NULL,"
+        " chunk_chars int NOT NULL,"
+        f" embedding vector({int(dim)}) NOT NULL,"
+        " text text NOT NULL,"
+        " PRIMARY KEY (doc_id, page, chunk_index)"
+        ")"
+    )
+
+
 class PgvectorBaseline:
     """Chunk + embed + cosine top-k, backed by pgvector."""
 
@@ -133,44 +163,35 @@ class PgvectorBaseline:
         from pgvector.psycopg import register_vector
 
         conn = psycopg.connect(self.dsn, autocommit=True)
+        register_vector(conn)
         if create:
             conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
             dim = self._embedding_dim()
-            conn.execute(
-                f"CREATE TABLE IF NOT EXISTS {TABLE} ("
-                "  doc_id text NOT NULL,"
-                "  page int NOT NULL,"
-                "  chunk_index int NOT NULL,"
-                "  chunk_chars int NOT NULL,"
-                "  embedding vector(%s) NOT NULL,"
-                "  text text NOT NULL,"
-                "  PRIMARY KEY (doc_id, chunk_index)"
-                ")",
-                (dim,),
-            )
+            conn.execute(create_table_sql(TABLE, dim))
             conn.execute(
                 f"CREATE INDEX IF NOT EXISTS {TABLE}_embedding_idx ON {TABLE} "
                 "USING hnsw (embedding vector_cosine_ops)"
             )
-        register_vector(conn)
         return conn
 
     def _embedding_dim(self) -> int:
         if not hasattr(self, "_dim"):
             probe = self._embed(["dimension probe"])
-            self._dim = len(probe[0])
+            first = probe[0]
+            # pgvector's Vector exposes its values via to_list(); it has no len().
+            self._dim = len(first.to_list() if hasattr(first, "to_list") else first)
         return self._dim
 
     # -- embedding --------------------------------------------------------
 
-    def _embed(self, texts: Sequence[str]) -> list[list[float]]:
+    def _embed(self, texts: Sequence[str]) -> list[Vector]:
         import litellm
 
-        vectors: list[list[float]] = []
+        vectors: list[Vector] = []
         for start in range(0, len(texts), self.embed_batch):
             batch = list(texts[start : start + self.embed_batch])
             response = litellm.embedding(model=self.embed_model, input=batch, timeout=120)
-            vectors.extend(item["embedding"] for item in response.data)
+            vectors.extend(Vector(item["embedding"]) for item in response.data)
         return vectors
 
     # -- ingestion --------------------------------------------------------
