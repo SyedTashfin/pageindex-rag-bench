@@ -1,0 +1,38 @@
+pageindex-rag-bench
+Copyright (c) 2026 Syed Mohammad Shah Mostafa (Syed Tashfin)
+
+This repository is an independent evaluation harness. It does not fork,
+vendor, or redistribute any third-party source code, model weights, or
+dataset content. Everything third-party is either installed as a declared
+dependency or downloaded at setup time, then verified by SHA-256.
+
+Third-party components referenced at runtime
+--------------------------------------------
+
+PageIndex
+  https://github.com/VectifyAI/PageIndex
+  Copyright (c) Vectify AI
+  Licensed under the MIT License.
+  Consumed as a Python dependency (`pageindex`). Not redistributed here.
+  The MIT licence requires that this attribution be retained.
+
+MMLongBench-Doc
+  https://github.com/mayubo2333/MMLongBench-Doc
+  Licensed under the Apache License, Version 2.0.
+  Canonical source of the 135 evaluation documents. The 34 documents used
+  here are downloaded at setup time and are not redistributed.
+
+MMLongBench-Doc-V2
+  https://github.com/VectifyAI/MMLongBench-Doc-V2
+  Licensed under the Apache License, Version 2.0.
+  Canonical source of the question annotations, derived from
+  MMLongBench-Doc. Downloaded at setup time and not redistributed.
+
+PageIndex-OSS-Benchmark
+  https://github.com/VectifyAI/PageIndex-OSS-Benchmark
+  No licence granted by the publisher.
+  Used for reference only: its published results are cited as a comparison
+  point in docs/FINDINGS.md. No file from it is copied, downloaded by this
+  harness, or committed to this repository.
+
+Apache License 2.0 text: https://www.apache.org/licenses/LICENSE-2.0

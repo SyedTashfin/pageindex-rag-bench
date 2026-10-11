@@ -1,0 +1,26 @@
+# Fetched data — never committed. See THIRD_PARTY.md.
+corpus/documents/
+corpus/annotations/
+corpus/indexed_docs.json
+
+# Raw per-question run output. Aggregated summaries in results/ ARE committed.
+results/raw/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+
+# Local environment
+.env
+.env.local
+*.local.yaml
+
+# OS
+.DS_Store
