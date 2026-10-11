@@ -13,8 +13,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: astral-sh/setup-uv@v3
-        with:
-          enable-cache: true
+        # No enable-cache: there is no uv.lock in this repository, and the setup
+        # action fails outright when its cache-dependency-glob matches nothing.
+        # The CI dependency set is four packages, so caching buys little anyway.
 
       - name: Install
         # Scoring tests import numpy, pytest and the adapters' pure helpers.
