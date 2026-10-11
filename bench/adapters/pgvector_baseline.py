@@ -26,7 +26,7 @@ from dataclasses import dataclass
 
 from pgvector import Vector
 
-from .base import Answer
+from .base import Answer, env_flag, think_extra_body
 
 DEFAULT_CHAT_MODEL = "ollama/qwen2.5:7b-instruct"
 DEFAULT_EMBED_MODEL = "ollama/nomic-embed-text"
@@ -145,6 +145,7 @@ class PgvectorBaseline:
         overlap_chars: int = 200,
         top_k: int = 5,
         embed_batch: int = 32,
+        think: bool | None = None,
     ) -> None:
         self.chat_model = chat_model or os.environ.get("BASELINE_CHAT_MODEL", DEFAULT_CHAT_MODEL)
         self.embed_model = embed_model or os.environ.get(
@@ -155,6 +156,9 @@ class PgvectorBaseline:
         self.overlap_chars = overlap_chars
         self.top_k = top_k
         self.embed_batch = embed_batch
+        # Same reasoning-model knob as the PageIndex adapter, so the two systems
+        # can be held identical on this too. See bench/adapters/base.py.
+        self.think = env_flag("BASELINE_THINK", True) if think is None else think
 
     # -- storage ----------------------------------------------------------
 
@@ -271,6 +275,7 @@ class PgvectorBaseline:
                 ],
                 temperature=0.0,
                 timeout=180,
+                extra_body=think_extra_body(self.think) or None,
             )
             text = completion.choices[0].message.content or ""
             usage = getattr(completion, "usage", None)

@@ -4,10 +4,65 @@ from __future__ import annotations
 
 import pytest
 
-from bench.adapters.base import pages_from_citations
+from bench.adapters.base import env_flag, pages_from_citations, think_extra_body
 from bench.adapters.pageindex_local import PageIndexLocal
 from bench.adapters.pgvector_baseline import chunk_pages, create_table_sql
 from bench.judge import Judge
+
+
+class TestThinkKnob:
+    """Reasoning models emit hidden reasoning by default. The knob exists so the
+    two systems can be held identical on it, and so the accuracy/speed trade-off
+    is explicit rather than accidental."""
+
+    def test_default_leaves_thinking_on(self):
+        assert think_extra_body(True) == {}
+
+    def test_disabled_emits_the_provider_option(self):
+        assert think_extra_body(False) == {"think": False}
+
+    def test_callers_pass_empty_as_none(self):
+        # litellm should not receive an empty dict as extra_body.
+        assert (think_extra_body(True) or None) is None
+        assert (think_extra_body(False) or None) == {"think": False}
+
+    def test_adapter_defaults_to_thinking_on(self, monkeypatch):
+        monkeypatch.delenv("PAGEINDEX_THINK", raising=False)
+        assert PageIndexLocal().think is True
+
+    def test_adapter_reads_the_env_knob(self, monkeypatch):
+        monkeypatch.setenv("PAGEINDEX_THINK", "false")
+        assert PageIndexLocal().think is False
+
+    def test_explicit_argument_beats_the_environment(self, monkeypatch):
+        monkeypatch.setenv("PAGEINDEX_THINK", "false")
+        assert PageIndexLocal(think=True).think is True
+
+
+class TestEnvFlag:
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("0", False), ("false", False), ("False", False), ("FALSE", False),
+            ("no", False), ("off", False), ("", False),
+            ("1", True), ("true", True), ("True", True), ("yes", True), ("on", True),
+        ],
+    )
+    def test_parses_the_usual_spellings(self, raw, expected, monkeypatch):
+        monkeypatch.setenv("X_FLAG", raw)
+        assert env_flag("X_FLAG", True) is expected
+
+    def test_returns_the_default_when_unset(self, monkeypatch):
+        monkeypatch.delenv("X_FLAG", raising=False)
+        assert env_flag("X_FLAG", True) is True
+        assert env_flag("X_FLAG", False) is False
+
+    def test_the_naive_reading_is_the_bug_this_avoids(self, monkeypatch):
+        import os
+
+        monkeypatch.setenv("X_FLAG", "0")
+        assert bool(os.environ["X_FLAG"]) is True   # what bool(env) would give
+        assert env_flag("X_FLAG", True) is False    # what it should give
 
 
 class TestParseChatEnvelope:

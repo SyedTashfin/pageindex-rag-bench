@@ -176,25 +176,34 @@ The harness handles this correctly: a page or structure payload yields its
 retrieved pages as genuine provenance and is flagged `_shape`, never scored as a
 response.
 
-### Thinking mode costs 50x here, and is a confounder
+### Thinking mode costs 24x here, for no accuracy gain on this task
 
-`qwen3` is a hybrid reasoning model and emits reasoning by default. Measured on
-one question, via `litellm` the way both adapters call it:
+`qwen3` is a hybrid reasoning model and emits hidden reasoning by default.
+Measured through the baseline adapter on the same question, same document, same
+retrieved context — only the knob differs:
 
-| Settings | `content` | completion tokens |
-| --- | --- | --- |
-| default (thinking on) | `Paris` | **155** |
-| `think=False` via `extra_body` | `Paris.` | **3** |
+| `think` | Answer | completion tokens | Latency |
+| --- | --- | --- | --- |
+| on (default) | `2021-02-08` | 206 | **19.3 s** |
+| off | `2021-02-08` | 11 | **0.8 s** |
 
-Two consequences. First, a small token cap produces an **empty response**, because
-the model spends the entire budget reasoning and never emits content — this is the
-origin of one of the empty answers observed above, and it is the failure mode most
-likely to corrupt a result silently. Second, thinking is the dominant cost in the
-53-second latencies.
+Same correct answer, **24× faster**, 19× fewer output tokens. On a grounded
+extraction task the reasoning buys nothing and costs almost everything — which
+also means every latency figure quoted elsewhere in this file is a
+thinking-enabled figure, and the baseline is far cheaper than it looks.
 
-Turning it off is **not** applied unconditionally: the vendor's own results show
-accuracy rising with reasoning effort, so disabling it would trade real accuracy
-for speed. It is a knob, and the trade-off is stated rather than hidden.
+A second, nastier consequence: **a small output-token cap produces an empty
+response**, because the model spends the entire budget reasoning and never emits
+content. That is the origin of one of the empty answers observed above, and it is
+the failure mode most likely to corrupt a result silently — no error, no warning,
+just nothing.
+
+It is a **knob, not a policy**. `PAGEINDEX_THINK` and `BASELINE_THINK` default to
+**on**, because the upstream benchmark shows accuracy rising with reasoning effort
+and a harder multi-hop question is exactly where it should pay off. Both adapters
+take the same setting, so the two systems can be held identical on it — otherwise
+this would become a silent confounder in the comparison. Turning it off is a
+one-variable experiment with a one-command revert, not a permanent choice.
 
 ### What this says about local vectorless RAG
 

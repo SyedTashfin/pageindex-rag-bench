@@ -17,7 +17,7 @@ import time
 from collections.abc import Sequence
 from typing import Any
 
-from .base import Answer, pages_from_citations
+from .base import Answer, env_flag, pages_from_citations, think_extra_body
 
 DEFAULT_CHAT_MODEL = "ollama/qwen2.5:7b-instruct"
 DEFAULT_INDEX_MODEL = "ollama/qwen2.5:7b-instruct"
@@ -35,6 +35,7 @@ class PageIndexLocal:
         storage_path: str | None = None,
         mode: str | None = None,
         citations: bool = True,
+        think: bool | None = None,
     ) -> None:
         self.chat_model = chat_model or os.environ.get("PAGEINDEX_CHAT_MODEL", DEFAULT_CHAT_MODEL)
         self.index_model = index_model or os.environ.get(
@@ -47,6 +48,10 @@ class PageIndexLocal:
         # full LLM tree. Kept as a knob so the harness can compare them.
         self.mode = mode
         self.citations = citations
+        # Reasoning models emit hidden reasoning by default. Left ON unless
+        # explicitly disabled: the upstream benchmark shows accuracy rising with
+        # reasoning effort, so this trades accuracy for speed. See FINDINGS.md.
+        self.think = env_flag("PAGEINDEX_THINK", True) if think is None else think
         self._client = None
 
     # -- client -----------------------------------------------------------
@@ -199,7 +204,12 @@ class PageIndexLocal:
             )
 
         started = time.time()
-        result = self.client.chat(question, doc_id=internal, citations=self.citations)
+        result = self.client.chat(
+            question,
+            doc_id=internal,
+            citations=self.citations,
+            extra_body=think_extra_body(self.think) or None,
+        )
         elapsed = time.time() - started
         text, raw, pages = self.parse_chat(result)
 
