@@ -151,32 +151,56 @@ measuring `qwen3:8b`'s ability to transcribe a filename, not PageIndex's
 retrieval quality. Any comparison run without the fix would have been a
 comparison of the wrong thing.
 
-### A remaining blocker: the duplicate-call guard
+### Two distinct failure modes, and only one of them is flaky
 
-With the short name, the tool call reaches page 14 but the run still ends without
-an answer:
+After the naming fix, question 30 was attempted **three times** with the
+three-document demo slice in the store. Result:
 
-```
-{"error": "Duplicate function call detected. The get_page_content function was
-already called for page 14. Please specify a different page or range."}
-```
+| Attempt | Retrieved the evidence page (14)? | Response produced |
+| --- | --- | --- |
+| 1 | no | empty |
+| 2 | **yes** | the text of page 14 |
+| 3 | **yes** | the text of page 14 |
 
-The agent called the same tool with the same argument twice, PageIndex's guard
-rejected it, and that rejection became the returned envelope — so the loop
-terminated without a synthesised answer. This is unresolved. It is either a
-vendor design issue (a repeated read should be tolerated, or the agent should be
-told to answer) or something the harness should handle by retrying with an
-explicit instruction to answer now. Until it is fixed, PageIndex's responses on
-this hardware are not comparable to the baseline's.
+So the two problems are not the same kind of problem, and conflating them would
+hide the useful part:
+
+**Retrieval is intermittently successful.** 2 of 3 attempts surfaced the correct
+evidence page; 1 returned nothing at all. With n=3 this is not a rate — it is
+evidence that the failure is *stochastic*, which is worse than a consistent
+failure for a benchmark, because a single run cannot be trusted and a published
+number would depend on luck. A meaningful reliability figure needs many more
+attempts than this.
+
+**Synthesis never happens.** All three attempts that retrieved page 14 returned
+*the page's text*, not a formatted answer, and the earlier duplicate-call
+envelope (`Duplicate function call detected...`) is a third variant of the same
+underlying issue: the agent loop terminates on a tool result instead of
+producing a final answer. This one is consistent, not flaky.
+
+**The failure is silent.** The unsuccessful attempt returned an empty string, not
+an error. That distinction matters operationally: an error is actionable, an
+empty response reads like a model with nothing to say. The harness records it as
+**unscored rather than incorrect** — `bench.run` only grades when a response
+exists, so a system that fails to answer reduces `n_scored` (coverage) instead of
+deflating its accuracy. It cannot be credited for an answer it did not give, and
+it is not charged with an error it did not make.
 
 ### What this says about local vectorless RAG
 
 Running a reasoning-based retriever on a small local model moves the failure
-surface. Retrieval itself worked — the tree led to the right page. The failures
-were in the *tool-calling protocol around it*: reproducing an identifier, and
-terminating the loop. That is a different class of problem from the one the
+surface. Retrieval itself worked whenever the loop got that far — the tree led to
+the right page. The failures were in the *protocol around it*: reproducing an
+identifier, selecting the right one among several documents, and terminating the
+loop with an answer. That is a different class of problem from the one the
 vectorless-RAG pitch is about, and it is invisible in any benchmark run on a
-frontier model.
+frontier model — which is presumably why it does not appear in the vendor's own
+results.
+
+The practical consequence for this repository: **the retrieval comparison is
+measurable, the accuracy comparison is not** — not until synthesis works. The
+README says so rather than publishing a number built on a system that sometimes
+returns nothing.
 
 ## Expected failure modes to look for
 

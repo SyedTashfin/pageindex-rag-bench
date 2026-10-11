@@ -48,21 +48,29 @@ resumable — indexing is cached, so an interrupted run continues where it stopp
 
 ### What running it actually looks like
 
-First end-to-end run on the demo slice, question: *"Format the date mentioned on
-page 14 as YYYY-MM-DD."* — reference answer `2021-02-08`, evidence on page 14:
+Question: *"Format the date mentioned on page 14 as YYYY-MM-DD."* — reference
+answer `2021-02-08`, evidence on page 14. Three attempts against the
+three-document demo slice, plus the baseline:
 
-| | PageIndex (local) | pgvector baseline |
+| | pgvector baseline | PageIndex (local), attempt 1 / 2 / 3 |
 | --- | --- | --- |
-| Found page 14 (the evidence page) | yes | yes |
-| Response | the text of page 14 | `2021-02-08` |
-| Latency | 58.2 s | 16.3 s |
+| Found the evidence page | yes | **no** / yes / yes |
+| Response | `2021-02-08` | empty / the text of page 14 / the text of page 14 |
+| Latency | 16.3 s | 52.6 s / 53.5 s / 53.6 s |
 
-Both retrieved the right page. Only the baseline produced the formatted answer —
-PageIndex returned the page content itself, because its local agent loop can end
-on a retrieval tool call instead of synthesising a final answer. That is recorded
-honestly (`_shape: page_content` in the run output) rather than scored as a
-correct response. One question is not a result; it is a demonstration that the
-harness runs and that the comparison is worth making properly.
+The baseline answered correctly every time. PageIndex retrieved the right page in
+two of three attempts and never produced a formatted answer — its local agent
+loop terminates on a retrieval tool call instead of synthesising one. Both facts
+are recorded rather than smoothed over: the page-content case is flagged
+(`_shape: page_content`), and a silent empty response is **unscored, not
+incorrect**, so a system that fails to answer reduces coverage instead of
+deflating its accuracy.
+
+**Three attempts is not a rate**, and one question is not a result. What this
+demonstrates is that the harness runs, that it records failure honestly, and that
+the comparison is worth making properly — not what the answer is. See
+[`docs/FINDINGS.md`](docs/FINDINGS.md) for the full diagnosis, including why
+documents are ingested under short names.
 
 ## The question this answers
 
