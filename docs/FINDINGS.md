@@ -151,56 +151,66 @@ measuring `qwen3:8b`'s ability to transcribe a filename, not PageIndex's
 retrieval quality. Any comparison run without the fix would have been a
 comparison of the wrong thing.
 
-### Two distinct failure modes, and only one of them is flaky
+### The real cause: the agent loop terminates on a tool result
 
-After the naming fix, question 30 was attempted **three times** with the
-three-document demo slice in the store. Result:
+The envelope `chat()` returns is whatever the **last tool call** produced, not a
+synthesised answer. Six distinct shapes, same question, same document:
 
-| Attempt | Retrieved the evidence page (14)? | Response produced |
+| Envelope | What it actually is |
+| --- | --- |
+| `{"status":"success","content":"February 8, 2021"}` | a real answer (seen once, early) |
+| `{"page":14,"text":"<page 14>"}` | the result of `get_page_content` |
+| `{"success":true,"doc_name":"doc3.pdf","structure":[…]}` | the result of `get_document_structure` |
+| `{"error":"Duplicate request for page 14…"}` | its own duplicate-call guard |
+| `{"error":"Document not found…"}` | name/id resolution failure |
+| `""` | empty |
+
+This reframes the diagnosis. It is **not** primarily an identifier problem (that
+was real and is fixed) and **not** primarily a token-budget problem. With
+`qwen3:8b` the model keeps calling tools and never decides to stop and answer, so
+the caller receives the last tool output. A frontier model ends the loop with a
+final assistant message — which is why the vendor's published numbers do not show
+this failure.
+
+The harness handles this correctly: a page or structure payload yields its
+retrieved pages as genuine provenance and is flagged `_shape`, never scored as a
+response.
+
+### Thinking mode costs 50x here, and is a confounder
+
+`qwen3` is a hybrid reasoning model and emits reasoning by default. Measured on
+one question, via `litellm` the way both adapters call it:
+
+| Settings | `content` | completion tokens |
 | --- | --- | --- |
-| 1 | no | empty |
-| 2 | **yes** | the text of page 14 |
-| 3 | **yes** | the text of page 14 |
+| default (thinking on) | `Paris` | **155** |
+| `think=False` via `extra_body` | `Paris.` | **3** |
 
-So the two problems are not the same kind of problem, and conflating them would
-hide the useful part:
+Two consequences. First, a small token cap produces an **empty response**, because
+the model spends the entire budget reasoning and never emits content — this is the
+origin of one of the empty answers observed above, and it is the failure mode most
+likely to corrupt a result silently. Second, thinking is the dominant cost in the
+53-second latencies.
 
-**Retrieval is intermittently successful.** 2 of 3 attempts surfaced the correct
-evidence page; 1 returned nothing at all. With n=3 this is not a rate — it is
-evidence that the failure is *stochastic*, which is worse than a consistent
-failure for a benchmark, because a single run cannot be trusted and a published
-number would depend on luck. A meaningful reliability figure needs many more
-attempts than this.
-
-**Synthesis never happens.** All three attempts that retrieved page 14 returned
-*the page's text*, not a formatted answer, and the earlier duplicate-call
-envelope (`Duplicate function call detected...`) is a third variant of the same
-underlying issue: the agent loop terminates on a tool result instead of
-producing a final answer. This one is consistent, not flaky.
-
-**The failure is silent.** The unsuccessful attempt returned an empty string, not
-an error. That distinction matters operationally: an error is actionable, an
-empty response reads like a model with nothing to say. The harness records it as
-**unscored rather than incorrect** — `bench.run` only grades when a response
-exists, so a system that fails to answer reduces `n_scored` (coverage) instead of
-deflating its accuracy. It cannot be credited for an answer it did not give, and
-it is not charged with an error it did not make.
+Turning it off is **not** applied unconditionally: the vendor's own results show
+accuracy rising with reasoning effort, so disabling it would trade real accuracy
+for speed. It is a knob, and the trade-off is stated rather than hidden.
 
 ### What this says about local vectorless RAG
 
 Running a reasoning-based retriever on a small local model moves the failure
 surface. Retrieval itself worked whenever the loop got that far — the tree led to
 the right page. The failures were in the *protocol around it*: reproducing an
-identifier, selecting the right one among several documents, and terminating the
-loop with an answer. That is a different class of problem from the one the
-vectorless-RAG pitch is about, and it is invisible in any benchmark run on a
-frontier model — which is presumably why it does not appear in the vendor's own
-results.
+identifier, selecting the right one among several documents, and above all
+terminating the loop with an answer rather than a tool result. That is a different
+class of problem from the one the vectorless-RAG pitch is about, and it is
+invisible in any benchmark run on a frontier model.
 
 The practical consequence for this repository: **the retrieval comparison is
-measurable, the accuracy comparison is not** — not until synthesis works. The
-README says so rather than publishing a number built on a system that sometimes
-returns nothing.
+measurable, the accuracy comparison is not** — not until the system under test can
+produce an answer at all. Neither number appears here, because producing one from
+a system that returns a tool payload or an empty string would be reporting the
+harness's behaviour rather than the model's.
 
 ## Expected failure modes to look for
 
