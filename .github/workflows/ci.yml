@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Install
+        # Scoring tests import numpy, pytest and the adapters' pure helpers.
+        # They deliberately do not need a database, a model, or a network.
+        run: |
+          uv venv --python 3.12
+          uv pip install --python .venv/bin/python pytest numpy ruff
+
+      - name: Lint
+        run: .venv/bin/ruff check .
+
+      - name: Scoring and adapter tests
+        run: .venv/bin/python -m pytest tests -q
+
+  manifest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Manifest integrity
+        # The corpus itself is fetched, never committed, so CI cannot hash the
+        # documents. What it can check is that the manifest is internally
+        # consistent and complete: 34 unique documents, non-empty hashes, and a
+        # total that matches the sum of the parts.
+        run: |
+          python3 - <<'PY'
+          import json, sys
+          m = json.load(open("corpus/manifest.json"))
+          docs = m["documents"]
+          ids = [d["doc_id"] for d in docs]
+          errors = []
+          if len(ids) != 34:
+              errors.append(f"expected 34 documents, found {len(ids)}")
+          if len(set(ids)) != len(ids):
+              errors.append("duplicate doc_id in manifest")
+          for d in docs:
+              if len(d.get("sha256", "")) != 64:
+                  errors.append(f"{d['doc_id']}: bad sha256")
+              if not d.get("bytes"):
+                  errors.append(f"{d['doc_id']}: missing byte count")
+          if m.get("totals", {}).get("bytes") != sum(d["bytes"] for d in docs):
+              errors.append("totals.bytes does not match the sum of documents")
+          for name, meta in m["question_sets"].items():
+              # A set is acceptable if it declares a licence (Apache-2.0 sets do,
+              # via source_license) or is explicitly marked as not redistributed
+              # (the unlicensed comparison set does). Anything else is a
+              # licence-hygiene regression.
+              licensed = meta.get("license") or meta.get("source_license")
+              if not licensed and meta.get("redistributed") is not False:
+                  errors.append(
+                      f"{name}: set declares no licence and is not marked as not-redistributed"
+                  )
+          if errors:
+              print("\n".join(errors), file=sys.stderr)
+              sys.exit(1)
+          print(f"manifest ok: {len(docs)} documents, {m['totals']['bytes']:,} bytes")
+          PY
+
+      - name: No third-party data committed
+        # The whole point of the fetch-don't-vendor design: if a PDF or an
+        # annotation file ever lands in git, that is a licence regression.
+        run: |
+          if git ls-files | grep -E 'corpus/(documents|annotations)/' ; then
+            echo "third-party data is committed; see THIRD_PARTY.md" >&2
+            exit 1
+          fi
+          echo "no third-party data committed"

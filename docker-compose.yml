@@ -1,0 +1,22 @@
+# pgvector for the baseline. Port 5433 to avoid colliding with a local Postgres
+# on 5432. `docker compose up -d` then `PGVECTOR_DSN` above matches by default.
+services:
+  pgvector:
+    image: pgvector/pgvector:pg17
+    container_name: ragbench-pgvector
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ragbench
+    ports:
+      - "5433:5432"
+    volumes:
+      - ragbench-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ragbench"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  ragbench-pgdata:
