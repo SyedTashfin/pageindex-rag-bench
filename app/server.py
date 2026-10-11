@@ -27,6 +27,8 @@ from pydantic import BaseModel
 
 from bench.preload import preload_litellm
 
+from . import config
+
 # Import litellm in the main thread, before any worker thread exists. Both
 # PageIndex (its own preload thread) and the baseline import it lazily, and two
 # concurrent first-imports race inside importlib and wedge the process. See
@@ -38,9 +40,11 @@ DEMO_SET = os.path.join(REPO_ROOT, "app", "demo_set.json")
 DOCUMENTS_DIR = os.path.join(REPO_ROOT, "corpus", "documents")
 INDEX_HTML = os.path.join(REPO_ROOT, "app", "index.html")
 
-CHAT_MODEL = os.environ.get("PAGEINDEX_CHAT_MODEL", "ollama/qwen3:8b")
-INDEX_MODEL = os.environ.get("PAGEINDEX_INDEX_MODEL", "ollama/qwen3:1.7b")
-EMBED_MODEL = os.environ.get("BASELINE_EMBED_MODEL", "ollama/nomic-embed-text")
+# From app/config.py — one definition shared with the command line tools, so the
+# demo and the CLIs cannot disagree about which model they are using.
+CHAT_MODEL = config.CHAT_MODEL
+INDEX_MODEL = config.INDEX_MODEL
+EMBED_MODEL = config.EMBED_MODEL
 
 
 def load_demo() -> dict:
@@ -232,3 +236,54 @@ def questions() -> dict:
             for q in demo["questions"]
         ],
     }
+
+
+class FreeAsk(BaseModel):
+    question: str
+
+
+@app.post("/api/ask-free")
+def ask_free(payload: FreeAsk) -> JSONResponse:
+    """Ask anything across every indexed document.
+
+    This is the document-assistant path, not the benchmark. It uses the vector
+    baseline because that is the system which reliably produces answers; PageIndex
+    is deliberately not offered here, because its local agent returns tool results
+    instead of answers on this model. See docs/FINDINGS.md.
+    """
+    if not STATE["ready"]:
+        return JSONResponse({"error": "not indexed yet"}, status_code=409)
+
+    question = (payload.question or "").strip()
+    if not question:
+        return JSONResponse({"error": "empty question"}, status_code=400)
+
+    baseline = build_systems()["pgvector_baseline"]
+    try:
+        answer = baseline.answer_any(question)
+    except Exception as exc:  # noqa: BLE001 - surfaced to the page
+        return JSONResponse({"error": f"{type(exc).__name__}: {exc}"}, status_code=500)
+
+    return JSONResponse(
+        {
+            "question": question,
+            "system": baseline.name,
+            "answer": answer.response,
+            "documents_used": answer.raw.get("documents_used", []),
+            "sources": answer.raw.get("sources", []),
+            "latency_s": round(answer.latency_s, 2),
+            "top_k": baseline.top_k,
+            "think": baseline.think,
+        }
+    )
+
+
+@app.get("/api/index")
+def indexed() -> dict:
+    """What is actually in the vector index, across every ingested document."""
+    baseline = build_systems()["pgvector_baseline"]
+    try:
+        docs = baseline.list_documents()
+    except Exception as exc:  # noqa: BLE001 - the page should still load
+        return {"error": f"{type(exc).__name__}: {exc}", "documents": []}
+    return {"documents": docs, "total": len(docs), "top_k": baseline.top_k}

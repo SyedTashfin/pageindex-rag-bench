@@ -221,6 +221,61 @@ produce an answer at all. Neither number appears here, because producing one fro
 a system that returns a tool payload or an empty string would be reporting the
 harness's behaviour rather than the model's.
 
+## Findings: the machine, not the code
+
+### 16 GB is not enough to run the model and the database together
+
+Measured on the development laptop (Apple M5, 16 GB) with PageIndex's store,
+Ollama, Colima and the pgvector container all up:
+
+```
+vm.swapusage: total = 9216.00M  used = 7816.94M     (85% of swap in use)
+swapins 50,184,166   swapouts 59,661,457
+```
+
+Resident at the same time: `qwen3:8b` 5.9 GB, `nomic-embed-text` 0.58 GB, the
+Colima VM 3.0 GB, plus the OS and the harness. The result is that a **two-token
+reply took 89 seconds** — every token pages model weights back off disk.
+
+This is invisible in any test that does not run the whole system at once, and it
+is the most likely explanation for the wildly variable PageIndex latencies
+(52–59 s for a single question) recorded elsewhere in this file. Those numbers
+are not a property of tree retrieval; they are a property of a machine that is
+out of memory.
+
+**Consequence for the benchmark:** latency measurements from this machine are not
+comparable to anything, and should not be published. Accuracy measurements are
+unaffected, but they need the model to be able to finish a call at all.
+
+A smaller model does fit — `qwen3:1.7b` (1.4 GB) answered in **3.6 s** where the
+8B model could not finish in 180 s. A workable local configuration exists; it is
+just not the configuration that gives good answers.
+
+### Page-addressed questions are structurally unfair to vector retrieval
+
+Asking the document-assistant path *"What is the date mentioned on page 14?"*
+with the small model:
+
+- **Vector baseline**: retrieved pages 2, 3, 1, 3, 3 — **not page 14** — and
+  answered `28/3/2018` against a reference of `2021-02-08`. Confidently wrong.
+- **PageIndex**: retrieved **page 14** — correct — but returned the page text
+  instead of an answer (see above).
+
+The reason is not a flaw in either implementation. *"On page 14"* is a
+**structural** constraint: it points at a location, not a meaning, and an
+embedding of the question cannot represent it. Semantic search matched pages that
+mention dates, which is the reasonable thing to do with the words it was given.
+
+A tree index encodes the structure, so it can honour a page reference directly.
+**This is a real, mechanical advantage of the vectorless approach, demonstrated
+rather than asserted** — and it is the strongest evidence yet that the comparison
+is worth making properly, because the question set contains a meaningful number
+of page-addressed questions that quietly favour one side.
+
+It also cuts the other way as a caution: the baseline answered fast and wrong,
+with no signal that retrieval had missed. A document assistant built on this must
+report its sources, which is why the harness and the CLI both do.
+
 ## Expected failure modes to look for
 
 Recorded before the run so that post-hoc rationalisation is harder.

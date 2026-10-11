@@ -240,59 +240,206 @@ class PgvectorBaseline:
         finally:
             conn.close()
 
-    # -- answering --------------------------------------------------------
+    def ingest_files(self, paths: Sequence[str]) -> dict[str, int]:
+        """Ingest arbitrary PDFs by path — the "feed it my own documents" path.
 
-    def answer(self, doc_id: str, question: str) -> Answer:
-        import litellm
+        ``prepare`` is the benchmark path and expects corpus doc_ids; this takes
+        any file and keys it by its filename, so a folder of your own documents
+        can be indexed without pretending they are benchmark input.
 
+        Returns a mapping of name -> chunks ingested, skipping anything already
+        indexed so a second run is cheap.
+        """
+        conn = self._connect()
+        ingested: dict[str, int] = {}
+        try:
+            for i, path in enumerate(paths, 1):
+                name = os.path.basename(path)
+                existing = conn.execute(
+                    f"SELECT count(*) FROM {TABLE} WHERE doc_id = %s", (name,)
+                ).fetchone()[0]
+                if existing:
+                    ingested[name] = existing
+                    print(f"  [{i}/{len(paths)}] {name}: {existing} chunks cached")
+                    continue
+
+                started = time.time()
+                try:
+                    chunks = chunk_pages(
+                        extract_pages(path), self.chunk_chars, self.overlap_chars
+                    )
+                except Exception as exc:  # noqa: BLE001 - one bad file must not stop a batch
+                    print(f"  [{i}/{len(paths)}] {name}: FAILED to read ({exc})")
+                    continue
+                if not chunks:
+                    print(f"  [{i}/{len(paths)}] {name}: no extractable text, skipped")
+                    continue
+                vectors = self._embed([c.text for c in chunks])
+                with conn.cursor() as cur:
+                    cur.executemany(
+                        f"INSERT INTO {TABLE}"
+                        " (doc_id, page, chunk_index, chunk_chars, embedding, text)"
+                        " VALUES (%s, %s, %s, %s, %s, %s)",
+                        [
+                            (name, c.page, c.index, len(c.text), vec, c.text)
+                            for c, vec in zip(chunks, vectors, strict=True)
+                        ],
+                    )
+                ingested[name] = len(chunks)
+                print(
+                    f"  [{i}/{len(paths)}] {name}: {len(chunks)} chunks "
+                    f"in {time.time()-started:.1f}s"
+                )
+        finally:
+            conn.close()
+        return ingested
+
+    def list_documents(self) -> list[dict]:
+        """What is actually in the index, with chunk counts."""
         conn = self._connect(create=False)
         try:
-            started = time.time()
-            query_vector = self._embed([question])[0]
             rows = conn.execute(
-                f"SELECT page, chunk_index, text, 1 - (embedding <=> %s) AS similarity"
+                f"SELECT doc_id, count(*) AS chunks, min(page) AS first_page,"
+                f" max(page) AS last_page FROM {TABLE} GROUP BY doc_id ORDER BY doc_id"
+            ).fetchall()
+            return [
+                {
+                    "doc_id": r[0],
+                    "chunks": int(r[1]),
+                    "first_page": int(r[2]),
+                    "last_page": int(r[3]),
+                }
+                for r in rows
+            ]
+        finally:
+            conn.close()
+
+    # -- answering --------------------------------------------------------
+
+    def _retrieve(self, conn, question: str, doc_id: str | None) -> list[tuple]:
+        """Cosine top-k, optionally scoped to one document.
+
+        With ``doc_id=None`` the search spans every indexed document, which is
+        the document-assistant path rather than the benchmark path. Rows carry
+        their doc_id so a cross-document answer can say where it came from.
+        """
+        query_vector = self._embed([question])[0]
+        if doc_id:
+            return conn.execute(
+                f"SELECT doc_id, page, chunk_index, text, 1 - (embedding <=> %s) AS similarity"
                 f" FROM {TABLE} WHERE doc_id = %s"
                 " ORDER BY embedding <=> %s LIMIT %s",
                 (query_vector, doc_id, query_vector, self.top_k),
             ).fetchall()
-            retrieval_s = time.time() - started
+        return conn.execute(
+            f"SELECT doc_id, page, chunk_index, text, 1 - (embedding <=> %s) AS similarity"
+            f" FROM {TABLE}"
+            " ORDER BY embedding <=> %s LIMIT %s",
+            (query_vector, query_vector, self.top_k),
+        ).fetchall()
 
+    def _generate(self, rows: list[tuple], question: str) -> Answer:
+        """Build the grounded context and ask the model to answer from it."""
+        import litellm
+
+        pages = sorted({int(r[1]) for r in rows})
+        # Group by document so a cross-document answer labels its sources rather
+        # than implying everything came from one file.
+        context = "\n\n".join(
+            f"[{r[0]} page {r[1]}]\n{r[3]}" if len({x[0] for x in rows}) > 1
+            else f"[page {r[1]}]\n{r[3]}"
+            for r in rows
+        )
+        started = time.time()
+        completion = litellm.completion(
+            model=self.chat_model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": GROUNDED_PROMPT.format(context=context, question=question),
+                }
+            ],
+            temperature=0.0,
+            timeout=180,
+            extra_body=think_extra_body(self.think) or None,
+        )
+        text = completion.choices[0].message.content or ""
+        usage = getattr(completion, "usage", None)
+        try:
+            cost = float(litellm.completion_cost(completion) or 0.0)
+        except Exception:  # noqa: BLE001 - unknown local models have no price table
+            cost = 0.0
+
+        return Answer(
+            response=text.strip(),
+            retrieved_pages=pages,
+            latency_s=time.time() - started,
+            prompt_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
+            completion_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
+            cost_usd=cost,
+            context_chars=len(context),
+            raw={
+                "top_k": self.top_k,
+                "sources": [
+                    {
+                        "doc_id": r[0],
+                        "page": int(r[1]),
+                        "similarity": round(float(r[4]), 4),
+                        "preview": " ".join(str(r[3]).split())[:160],
+                    }
+                    for r in rows
+                ],
+            },
+        )
+
+    def answer(self, doc_id: str, question: str) -> Answer:
+        """Answer within one document — the benchmark path."""
+        conn = self._connect(create=False)
+        try:
+            started = time.time()
+            rows = self._retrieve(conn, question, doc_id)
+            retrieval_s = time.time() - started
             if not rows:
                 return Answer(
-                    response="", retrieved_pages=[], latency_s=retrieval_s,
+                    response="",
+                    retrieved_pages=[],
+                    latency_s=retrieval_s,
                     raw={"error": "no chunks indexed for this document"},
                 )
+            answer = self._generate(rows, question)
+            answer.latency_s += retrieval_s
+            answer.raw["retrieval_s"] = retrieval_s
+            return answer
+        finally:
+            conn.close()
 
-            pages = sorted({int(r[0]) for r in rows})
-            context = "\n\n".join(f"[page {r[0]}]\n{r[2]}" for r in rows)
-            completion = litellm.completion(
-                model=self.chat_model,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": GROUNDED_PROMPT.format(context=context, question=question),
-                    }
-                ],
-                temperature=0.0,
-                timeout=180,
-                extra_body=think_extra_body(self.think) or None,
-            )
-            text = completion.choices[0].message.content or ""
-            usage = getattr(completion, "usage", None)
-            try:
-                cost = float(litellm.completion_cost(completion) or 0.0)
-            except Exception:  # noqa: BLE001 - unknown local models have no price table
-                cost = 0.0
+    def answer_any(self, question: str) -> Answer:
+        """Answer across every indexed document — the document-assistant path.
 
-            return Answer(
-                response=text.strip(),
-                retrieved_pages=pages,
-                latency_s=time.time() - started,
-                prompt_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
-                completion_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
-                cost_usd=cost,
-                context_chars=len(context),
-                raw={"retrieval_s": retrieval_s, "top_k": self.top_k},
-            )
+        This is the "feed all the documents and ask" behaviour. It is a different
+        question from the benchmark's: retrieval is deliberately unrestricted, so
+        it says nothing about whether one strategy beats another. It exists
+        because it is the thing people actually want to use day to day.
+        """
+        return self._answer_any_with_conn(question)
+
+    def _answer_any_with_conn(self, question: str) -> Answer:
+        conn = self._connect(create=False)
+        try:
+            started = time.time()
+            rows = self._retrieve(conn, question, None)
+            retrieval_s = time.time() - started
+            if not rows:
+                return Answer(
+                    response="",
+                    retrieved_pages=[],
+                    latency_s=retrieval_s,
+                    raw={"error": "nothing indexed yet — ingest a folder first"},
+                )
+            answer = self._generate(rows, question)
+            answer.latency_s += retrieval_s
+            answer.raw["retrieval_s"] = retrieval_s
+            answer.raw["documents_used"] = sorted({r[0] for r in rows})
+            return answer
         finally:
             conn.close()
